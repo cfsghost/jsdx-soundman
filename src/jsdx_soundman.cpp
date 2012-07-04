@@ -5,6 +5,7 @@
 #include <pulse/pulseaudio.h>
 #include <list>
 #include <string>
+#include <cmath>
 
 #include "jsdx_soundman.hpp"
 
@@ -176,7 +177,33 @@ namespace JSDXSoundman {
 			return scope.Close(Integer::New(-1));
 
 		/* Figure percentage of volume */
-		return scope.Close(Integer::New((int)((pa_cvolume_avg(&(sink->volume)) * 100) / PA_VOLUME_NORM)));
+		return scope.Close(Integer::New((int)floor(((pa_cvolume_avg(&(sink->volume)) * 100.) / PA_VOLUME_NORM) + 0.5)));
+	}
+
+	Handle<Value> SetVolume(const Arguments& args)
+	{
+		HandleScope scope;
+
+		if (args[0]->IsNumber()) {
+
+			/* Get default sink */
+			pa_sink_info *sink = _GetPulseAudioDefaultSink();
+			if (sink == NULL)
+				return scope.Close(Integer::New(-1));
+
+			pa_volume_t volume = (pa_volume_t) fmax((args[0]->ToInteger()->Value() * PA_VOLUME_NORM) / 100, 0);
+			pa_cvolume *cvolume = pa_cvolume_set(&sink->volume, sink->volume.channels, volume);
+			pa_operation *op = pa_context_set_sink_volume_by_index(context, sink->index, cvolume, NULL, NULL);
+
+			int ret;
+			while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
+				pa_mainloop_iterate(mainloop, 1, &ret);
+			}
+
+			pa_operation_unref(op);
+		}
+
+		return args.This();
 	}
 
 	static void init(Handle<Object> target) {
@@ -184,6 +211,7 @@ namespace JSDXSoundman {
 
 		NODE_SET_METHOD(target, "PulseAudioInit", PulseAudioInit);
 		NODE_SET_METHOD(target, "getVolume", GetVolume);
+		NODE_SET_METHOD(target, "setVolume", SetVolume);
 	}
 
 	NODE_MODULE(jsdx_soundman, init);
