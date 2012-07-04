@@ -9,4 +9,5 @@ soundman.init(function(err) {
 	}
 		
 	soundman.setVolume(80);
+	soundman.uninit();
 });

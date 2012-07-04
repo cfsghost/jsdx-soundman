@@ -110,7 +110,16 @@ namespace JSDXSoundman {
 
 		uv_queue_work(uv_default_loop(), req, _PulseAudioInit, _PulseAudioInitCompleted);
 
-		uv_run(uv_default_loop());
+		uv_ref(uv_default_loop());
+
+		return Undefined();
+	}
+
+	Handle<Value> PulseAudioUninit(const Arguments& args)
+	{
+		HandleScope scope;
+
+		uv_unref(uv_default_loop());
 
 		return Undefined();
 	}
@@ -210,6 +219,7 @@ namespace JSDXSoundman {
 		HandleScope scope;
 
 		NODE_SET_METHOD(target, "PulseAudioInit", PulseAudioInit);
+		NODE_SET_METHOD(target, "PulseAudioUninit", PulseAudioUninit);
 		NODE_SET_METHOD(target, "getVolume", GetVolume);
 		NODE_SET_METHOD(target, "setVolume", SetVolume);
 	}
