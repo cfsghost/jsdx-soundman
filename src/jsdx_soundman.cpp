@@ -249,6 +249,18 @@ namespace JSDXSoundman {
 		return args.This();
 	}
 
+	Handle<Value> IsMuted(const Arguments& args)
+	{
+		HandleScope scope;
+
+		/* Get default sink */
+		pa_sink_info *sink = _GetPulseAudioDefaultSink();
+		if (sink == NULL)
+			return scope.Close(Integer::New(-1));
+
+		return scope.Close(Boolean::New(sink->mute));
+	}
+
 	void _PulseAudioEventCallback(pa_context *context, pa_subscription_event_type_t event, unsigned int index, void *data)
 	{
 
@@ -347,6 +359,7 @@ namespace JSDXSoundman {
 		NODE_SET_METHOD(target, "PulseAudioUninit", PulseAudioUninit);
 		NODE_SET_METHOD(target, "getVolume", GetVolume);
 		NODE_SET_METHOD(target, "setVolume", SetVolume);
+		NODE_SET_METHOD(target, "isMuted", IsMuted);
 		NODE_SET_METHOD(target, "on", On);
 
 		JSDX_NODE_DEFINE_CONSTANT(target, "EVENT_SINK", SOUNDMAN_EVENT_SINK);
