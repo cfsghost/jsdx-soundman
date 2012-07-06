@@ -48,6 +48,11 @@ namespace JSDXSoundman {
 		pa_threaded_mainloop_signal(mainloop, 0);
 	}
 
+	void _PulseAudioSuccess(pa_context* context, int success, void *data)
+	{
+		pa_threaded_mainloop_signal(mainloop, 0);
+	}
+
 	void _PulseAudioInit(uv_work_t *req)
 	{
 		int ret;
@@ -127,9 +132,18 @@ namespace JSDXSoundman {
 	{
 		HandleScope scope;
 
-		pa_context_disconnect(context);
+		pa_threaded_mainloop_lock(mainloop);
+
+		if (pa_context_get_state(context) == PA_CONTEXT_READY) {
+			pa_context_disconnect(context);
+		}
+
 		pa_context_unref(context);
+
+		pa_threaded_mainloop_unlock(mainloop);
+
 		pa_threaded_mainloop_stop(mainloop);
+		pa_threaded_mainloop_free(mainloop);
 
 		uv_unref(uv_default_loop());
 
@@ -234,7 +248,7 @@ namespace JSDXSoundman {
 
 			pa_volume_t volume = (pa_volume_t) fmax((args[0]->ToInteger()->Value() * PA_VOLUME_NORM) / 100, 0);
 			pa_cvolume *cvolume = pa_cvolume_set(&sink->volume, sink->volume.channels, volume);
-			pa_operation *op = pa_context_set_sink_volume_by_index(context, sink->index, cvolume, NULL, NULL);
+			pa_operation *op = pa_context_set_sink_volume_by_index(context, sink->index, cvolume, _PulseAudioSuccess, NULL);
 
 			pa_operation_unref(op);
 
@@ -254,6 +268,46 @@ namespace JSDXSoundman {
 			return scope.Close(Integer::New(-1));
 
 		return scope.Close(Boolean::New(sink->mute));
+	}
+
+	Handle<Value> Mute(const Arguments& args)
+	{
+		HandleScope scope;
+
+		/* Get default sink */
+		pa_sink_info *sink = _GetPulseAudioDefaultSink();
+		if (sink == NULL)
+			return scope.Close(Integer::New(-1));
+
+		pa_threaded_mainloop_lock(mainloop);
+
+		pa_operation *op = pa_context_set_sink_mute_by_index(context, sink->index, 1, _PulseAudioSuccess, NULL);
+
+		pa_operation_unref(op);
+
+		pa_threaded_mainloop_unlock(mainloop);
+
+		return args.This();
+	}
+
+	Handle<Value> Unmute(const Arguments& args)
+	{
+		HandleScope scope;
+
+		/* Get default sink */
+		pa_sink_info *sink = _GetPulseAudioDefaultSink();
+		if (sink == NULL)
+			return scope.Close(Integer::New(-1));
+
+		pa_threaded_mainloop_lock(mainloop);
+
+		pa_operation *op = pa_context_set_sink_mute_by_index(context, sink->index, 0, _PulseAudioSuccess, NULL);
+
+		pa_operation_unref(op);
+
+		pa_threaded_mainloop_unlock(mainloop);
+
+		return args.This();
 	}
 
 	void _PulseAudioEventCallback(pa_context *context, pa_subscription_event_type_t event, unsigned int index, void *data)
@@ -355,6 +409,8 @@ namespace JSDXSoundman {
 		NODE_SET_METHOD(target, "getVolume", GetVolume);
 		NODE_SET_METHOD(target, "setVolume", SetVolume);
 		NODE_SET_METHOD(target, "isMuted", IsMuted);
+		NODE_SET_METHOD(target, "mute", Mute);
+		NODE_SET_METHOD(target, "unmute", Unmute);
 		NODE_SET_METHOD(target, "on", On);
 
 		JSDX_NODE_DEFINE_CONSTANT(target, "EVENT_SINK", SOUNDMAN_EVENT_SINK);

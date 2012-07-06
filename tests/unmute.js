@@ -8,5 +8,5 @@ soundman.init(function(err) {
 		return;
 	}
 		
-	soundman.setVolume(80);
+	soundman.unmute();
 });
