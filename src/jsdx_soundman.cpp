@@ -1,7 +1,7 @@
 #include <v8.h>
 #include <node.h>
 #include <pthread.h>
-#include <ev.h>
+#include <uv.h>
 #include <pulse/pulseaudio.h>
 #include <list>
 #include <string>
@@ -15,25 +15,27 @@ namespace JSDXSoundman {
 	using namespace v8;
 	using namespace std;
 
-	typedef enum state {
-		CONNECTING,
-		CONNECTED,
-		ERROR
-	} PulseAudioState;
+	typedef enum {
+		SOUNDMAN_EVENT_SINK
+	} SoundmanEvent;
 
-	pa_mainloop *mainloop;
+	pa_threaded_mainloop *mainloop;
 	pa_mainloop_api *mainloop_api;
 	pa_context *context;
-	PulseAudioState state;
+
+	/* Asynchronize and threads */
+	bool threadRunning = false;
+	uv_async_t *sinkAsync = NULL;
+
+	/* Event handlers */
+	NodeCallback *sinkNotify_cb = NULL;
 
 	void _PulseAudioStateCallback(pa_context *context, void *data)
 	{
 		switch(pa_context_get_state(context)) {
 		case PA_CONTEXT_READY:
-			state = CONNECTED;
 			break;
 		case PA_CONTEXT_FAILED:
-			state = ERROR;
 			break;
 		case PA_CONTEXT_UNCONNECTED:
 		case PA_CONTEXT_AUTHORIZING:
@@ -42,24 +44,30 @@ namespace JSDXSoundman {
 		case PA_CONTEXT_TERMINATED:
 			break;
 		}
+
+		pa_threaded_mainloop_signal(mainloop, 0);
 	}
 
 	void _PulseAudioInit(uv_work_t *req)
 	{
 		int ret;
 
-		mainloop = pa_mainloop_new();
-		mainloop_api = pa_mainloop_get_api(mainloop);
+		mainloop = pa_threaded_mainloop_new();
+		mainloop_api = pa_threaded_mainloop_get_api(mainloop);
 		context = pa_context_new(mainloop_api, "Sound Manager");
 		pa_context_set_state_callback(context, &_PulseAudioStateCallback, NULL);
+
+		pa_threaded_mainloop_lock(mainloop);
+		pa_threaded_mainloop_start(mainloop);
 
 		/* Connect to PulseAudio server */
 		pa_context_connect(context, NULL, PA_CONTEXT_NOFLAGS, NULL);
 
-		state = CONNECTING;
-		while (state == CONNECTING) {
-			pa_mainloop_iterate(mainloop, 1, &ret);
+		while (pa_context_get_state(context) != PA_CONTEXT_READY && pa_context_get_state(context) != PA_CONTEXT_FAILED) {
+			pa_threaded_mainloop_wait(mainloop);
 		}
+
+		pa_threaded_mainloop_unlock(mainloop);
 	}
 
 	void _PulseAudioInitCompleted(uv_work_t *req)
@@ -69,7 +77,7 @@ namespace JSDXSoundman {
 		NodeCallback *callback = (NodeCallback *)req->data;
 
 		TryCatch try_catch;
-		if (state == ERROR) {
+		if (pa_context_get_state(context) != PA_CONTEXT_READY) {
 			/* Prepare arguments */
 			Local<Value> argv[1] = {
 				Local<Value>::New(Exception::Error(String::New("Failed to connect")))
@@ -100,7 +108,7 @@ namespace JSDXSoundman {
 			return Undefined();
 
 		/* Process callback function */
-		NodeCallback *callback = new NodeCallback();
+		NodeCallback *callback = new NodeCallback;
 		callback->Holder = Persistent<Object>::New(args.Holder());
 		callback->cb = Persistent<Function>::New(Local<Function>::Cast(args[0]));
 
@@ -119,6 +127,10 @@ namespace JSDXSoundman {
 	{
 		HandleScope scope;
 
+		pa_context_disconnect(context);
+		pa_context_unref(context);
+		pa_threaded_mainloop_stop(mainloop);
+
 		uv_unref(uv_default_loop());
 
 		return Undefined();
@@ -129,6 +141,8 @@ namespace JSDXSoundman {
 		std::string *default_sink_name = (std::string*) data;
 
 		*default_sink_name = info->default_sink_name;
+
+		pa_threaded_mainloop_signal(mainloop, 0);
 	}
 
 	void _SinkListCallback(pa_context *c, const pa_sink_info *sink, int eol, void *data)
@@ -139,6 +153,8 @@ namespace JSDXSoundman {
 		std::list<pa_sink_info *> *sinks = (std::list<pa_sink_info *> *) data;
 
 		sinks->push_back((pa_sink_info *)sink);
+
+		pa_threaded_mainloop_signal(mainloop, 0);
 	}
 
 	pa_sink_info *_GetPulseAudioSink(std::string sink_name)
@@ -146,13 +162,17 @@ namespace JSDXSoundman {
 		int ret;
 		std::list<pa_sink_info *> sinks;
 
+		pa_threaded_mainloop_lock(mainloop);
+
 		pa_operation* op = pa_context_get_sink_info_by_name(context, sink_name.c_str(), &_SinkListCallback, &sinks);
 
-		while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-			pa_mainloop_iterate(mainloop, 1, &ret);
+		while(pa_operation_get_state(op) != PA_OPERATION_DONE) {
+			pa_threaded_mainloop_wait(mainloop);
 		}
 
 		pa_operation_unref(op);
+
+		pa_threaded_mainloop_unlock(mainloop);
 
 		if (sinks.empty())
 			return NULL;
@@ -165,13 +185,17 @@ namespace JSDXSoundman {
 		int ret;
 		std::string sink_name;
 
+		pa_threaded_mainloop_lock(mainloop);
+
 		pa_operation* op = pa_context_get_server_info(context, &_GetPulseAudioSinkName_cb, &sink_name);
 
-		while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-			pa_mainloop_iterate(mainloop, 1, &ret);
+		while(pa_operation_get_state(op) != PA_OPERATION_DONE) {
+			pa_threaded_mainloop_wait(mainloop);
 		}
 
 		pa_operation_unref(op);
+
+		pa_threaded_mainloop_unlock(mainloop);
 
 		return _GetPulseAudioSink(sink_name);
 	}
@@ -185,8 +209,14 @@ namespace JSDXSoundman {
 		if (sink == NULL)
 			return scope.Close(Integer::New(-1));
 
+		pa_threaded_mainloop_lock(mainloop);
+
 		/* Figure percentage of volume */
-		return scope.Close(Integer::New((int)floor(((pa_cvolume_avg(&(sink->volume)) * 100.) / PA_VOLUME_NORM) + 0.5)));
+		int value = (int)floor(((pa_cvolume_avg(&(sink->volume)) * 100.) / PA_VOLUME_NORM) + 0.5);
+
+		pa_threaded_mainloop_unlock(mainloop);
+
+		return scope.Close(Integer::New(value));
 	}
 
 	Handle<Value> SetVolume(const Arguments& args)
@@ -200,16 +230,111 @@ namespace JSDXSoundman {
 			if (sink == NULL)
 				return scope.Close(Integer::New(-1));
 
+			pa_threaded_mainloop_lock(mainloop);
+
 			pa_volume_t volume = (pa_volume_t) fmax((args[0]->ToInteger()->Value() * PA_VOLUME_NORM) / 100, 0);
 			pa_cvolume *cvolume = pa_cvolume_set(&sink->volume, sink->volume.channels, volume);
 			pa_operation *op = pa_context_set_sink_volume_by_index(context, sink->index, cvolume, NULL, NULL);
 
 			int ret;
 			while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-				pa_mainloop_iterate(mainloop, 1, &ret);
+				pa_threaded_mainloop_wait(mainloop);
 			}
 
 			pa_operation_unref(op);
+
+			pa_threaded_mainloop_unlock(mainloop);
+		}
+
+		return args.This();
+	}
+
+	void _PulseAudioEventCallback(pa_context *context, pa_subscription_event_type_t event, unsigned int index, void *data)
+	{
+
+		if ((event & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_CHANGE) {
+
+			if ((event & PA_SUBSCRIPTION_EVENT_SINK) == PA_SUBSCRIPTION_EVENT_SINK) {
+
+				uv_async_send(sinkAsync);
+			}
+		}
+	}
+
+	void _SetupEvent(uv_work_t *req)
+	{
+		int ret;
+
+		pa_threaded_mainloop_lock(mainloop);
+
+		/* Set callback function */
+		pa_context_set_subscribe_callback(context, _PulseAudioEventCallback, NULL);
+
+		pa_operation *op = pa_context_subscribe(context, (pa_subscription_mask)
+			(PA_SUBSCRIPTION_MASK_CLIENT |
+			PA_SUBSCRIPTION_MASK_SINK |
+			PA_SUBSCRIPTION_MASK_SINK_INPUT),
+			NULL, NULL);
+
+		while (pa_operation_get_state(op) != PA_OPERATION_DONE) {
+			pa_threaded_mainloop_wait(mainloop);
+		}
+
+		pa_operation_unref(op);
+
+		pa_threaded_mainloop_unlock(mainloop);
+	}
+
+	void _SinkChangedCallback(uv_async_t *handle, int status)
+	{
+		NodeCallback *callback = sinkNotify_cb;
+
+		TryCatch try_catch;
+
+		callback->cb->Call(callback->Holder, 0, 0);
+
+		if (try_catch.HasCaught())
+			FatalException(try_catch);
+	}
+
+	Handle<Value> On(const Arguments& args)
+	{
+		HandleScope scope;
+		pa_operation *op;
+		int ret;
+
+		if (!args[0]->IsNumber())
+			return ThrowException(Exception::Error(String::New("First parameter is integer")));
+
+		if (!args[1]->IsFunction())
+			return ThrowException(Exception::Error(String::New("Second parameter is function")));
+
+		/* Process callback function */
+		NodeCallback *callback = new NodeCallback;
+		callback->Holder = Persistent<Object>::New(args.Holder());
+		callback->cb = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+
+		/* Initializing thread */
+		if (!threadRunning) {
+
+			/* Prepare structure for PulseAudio thread */
+			uv_work_t *req = new uv_work_t;
+			uv_queue_work(uv_default_loop(), req, _SetupEvent, NULL);
+		}
+
+		switch(args[0]->ToInteger()->Value()) {
+		case SOUNDMAN_EVENT_SINK: {
+			if (!sinkAsync)
+				sinkAsync = new uv_async_t;
+
+			sinkNotify_cb = callback;
+
+			uv_async_init(uv_default_loop(), sinkAsync, _SinkChangedCallback);
+
+			break;
+		}
+		default:
+			return ThrowException(Exception::Error(String::New("No such event")));
 		}
 
 		return args.This();
@@ -222,6 +347,9 @@ namespace JSDXSoundman {
 		NODE_SET_METHOD(target, "PulseAudioUninit", PulseAudioUninit);
 		NODE_SET_METHOD(target, "getVolume", GetVolume);
 		NODE_SET_METHOD(target, "setVolume", SetVolume);
+		NODE_SET_METHOD(target, "on", On);
+
+		JSDX_NODE_DEFINE_CONSTANT(target, "EVENT_SINK", SOUNDMAN_EVENT_SINK);
 	}
 
 	NODE_MODULE(jsdx_soundman, init);
