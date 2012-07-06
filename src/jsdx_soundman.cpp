@@ -236,11 +236,6 @@ namespace JSDXSoundman {
 			pa_cvolume *cvolume = pa_cvolume_set(&sink->volume, sink->volume.channels, volume);
 			pa_operation *op = pa_context_set_sink_volume_by_index(context, sink->index, cvolume, NULL, NULL);
 
-			int ret;
-			while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-				pa_threaded_mainloop_wait(mainloop);
-			}
-
 			pa_operation_unref(op);
 
 			pa_threaded_mainloop_unlock(mainloop);
