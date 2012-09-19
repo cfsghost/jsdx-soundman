@@ -123,7 +123,7 @@ namespace JSDXSoundman {
 
 		uv_queue_work(uv_default_loop(), req, _PulseAudioInit, _PulseAudioInitCompleted);
 
-		uv_ref(uv_default_loop());
+		uv_run(uv_default_loop());
 
 		return Undefined();
 	}
@@ -145,7 +145,7 @@ namespace JSDXSoundman {
 		pa_threaded_mainloop_stop(mainloop);
 		pa_threaded_mainloop_free(mainloop);
 
-		uv_unref(uv_default_loop());
+		uv_close((uv_handle_t *)sinkAsync, NULL);
 
 		return Undefined();
 	}
