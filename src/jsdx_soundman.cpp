@@ -55,8 +55,6 @@ namespace JSDXSoundman {
 
 	void _PulseAudioInit(uv_work_t *req)
 	{
-		int ret;
-
 		mainloop = pa_threaded_mainloop_new();
 		mainloop_api = pa_threaded_mainloop_get_api(mainloop);
 		context = pa_context_new(mainloop_api, "Sound Manager");
@@ -173,7 +171,6 @@ namespace JSDXSoundman {
 
 	pa_sink_info *_GetPulseAudioSink(std::string sink_name)
 	{
-		int ret;
 		std::list<pa_sink_info *> sinks;
 
 		pa_threaded_mainloop_lock(mainloop);
@@ -196,7 +193,6 @@ namespace JSDXSoundman {
 
 	pa_sink_info *_GetPulseAudioDefaultSink()
 	{
-		int ret;
 		std::string sink_name;
 
 		pa_threaded_mainloop_lock(mainloop);
@@ -324,8 +320,6 @@ namespace JSDXSoundman {
 
 	void _SetupEvent(uv_work_t *req)
 	{
-		int ret;
-
 		pa_threaded_mainloop_lock(mainloop);
 
 		/* Set callback function */
@@ -361,8 +355,6 @@ namespace JSDXSoundman {
 	Handle<Value> On(const Arguments& args)
 	{
 		HandleScope scope;
-		pa_operation *op;
-		int ret;
 
 		if (!args[0]->IsNumber())
 			return ThrowException(Exception::Error(String::New("First parameter is integer")));
