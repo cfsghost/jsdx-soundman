@@ -73,7 +73,7 @@ namespace JSDXSoundman {
 		pa_threaded_mainloop_unlock(mainloop);
 	}
 
-	void _PulseAudioInitCompleted(uv_work_t *req)
+	void _PulseAudioInitCompleted(uv_work_t *req, int status)
 	{
 		HandleScope scope;
 
