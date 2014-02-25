@@ -143,7 +143,10 @@ namespace JSDXSoundman {
 		pa_threaded_mainloop_stop(mainloop);
 		pa_threaded_mainloop_free(mainloop);
 
-		uv_close((uv_handle_t *)sinkAsync, NULL);
+		if (sinkAsync) {
+			uv_close((uv_handle_t *)sinkAsync, NULL);
+			sinkAsync = NULL;
+		}
 
 		return Undefined();
 	}
