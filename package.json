@@ -1,6 +1,6 @@
 {
 	"name": "jsdx-soundman",
-	"version": "0.0.2",
+	"version": "0.0.3",
 	"description": "Sound Manager API on JSDX framework",
 	"keywords": [
 		"jsdx",
@@ -22,7 +22,7 @@
 		"tests": "tests"
 	},
 	"engines": {
-		"node": ">= 0.8.0"
+		"node": ">= 0.10.0"
 	},
 	"scripts": {
 		"install": "node-gyp configure build"
