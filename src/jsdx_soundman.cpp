@@ -123,7 +123,7 @@ namespace JSDXSoundman {
 
 		uv_queue_work(uv_default_loop(), req, _PulseAudioInit, _PulseAudioInitCompleted);
 
-		uv_run(uv_default_loop());
+		uv_run(uv_default_loop(), UV_RUN_DEFAULT);
 
 		return Undefined();
 	}
